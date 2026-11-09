@@ -1,0 +1,16 @@
+name: Feature request
+description: Propose support for a new change type, language, framework, or workflow
+labels: [enhancement]
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Scenario
+      description: What change do you make, and what follow-up work should RippleFix handle?
+    validations:
+      required: true
+  - type: textarea
+    id: determinism
+    attributes:
+      label: How can it be detected deterministically?
+      description: Which syntax or evidence proves the relationship? What is ambiguous?
