@@ -7,6 +7,8 @@
 [![CI](https://github.com/lizasodev/RippleFix/actions/workflows/ci.yml/badge.svg)](https://github.com/lizasodev/RippleFix/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/lizasodev/RippleFix/actions/workflows/codeql.yml/badge.svg)](https://github.com/lizasodev/RippleFix/actions/workflows/codeql.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Good first issues](https://img.shields.io/github/issues/lizasodev/RippleFix/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/lizasodev/RippleFix/labels/good%20first%20issue)
+[![Open in GitHub Codespaces](https://img.shields.io/badge/Codespaces-open-2dd4bf?logo=github)](https://codespaces.new/lizasodev/RippleFix)
 
 </p>
 
@@ -92,13 +94,27 @@ cargo install --locked --path crates/ripplefix-cli
 ripplefix doctor
 ```
 
+## Contributing
+
+RippleFix is early, so this is a great time to shape it. You can be running
+the tests in about 5 minutes, either locally or in
+[Codespaces](https://codespaces.new/lizasodev/RippleFix).
+
+* Pick a [good first issue](https://github.com/lizasodev/RippleFix/labels/good%20first%20issue)
+  or a [help wanted](https://github.com/lizasodev/RippleFix/labels/help%20wanted) one.
+  Each issue says which files to touch and what "done" means.
+* Ask questions or propose ideas in [Discussions](https://github.com/lizasodev/RippleFix/discussions).
+* Read the [contributing guide](CONTRIBUTING.md). It covers the three
+  rules: deterministic only, never overstate certainty, and never run user
+  code without consent.
+
 ## Documentation
 
 * [Architecture](docs/architecture.md), including the [security model](docs/architecture.md#security-model)
 * [Roadmap and status](docs/roadmap.md)
 * [Standards alignment (ISO/IEC 27001, NIST SSDF, ISO/IEC 25010)](docs/compliance.md)
 * [Development guide](docs/development.md)
-* [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Changelog](CHANGELOG.md)
+* [Contributing](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [Security policy](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License
 

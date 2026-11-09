@@ -3,3 +3,6 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/lizasodev/RippleFix/security/advisories/new
     about: Please report vulnerabilities privately, never in public issues.
+  - name: Questions and ideas
+    url: https://github.com/lizasodev/RippleFix/discussions
+    about: Ask how something works or propose a feature before writing code.
