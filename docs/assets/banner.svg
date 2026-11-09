@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="t d">
+  <title id="t">RippleFix</title>
+  <desc id="d">RippleFix: change code once, handle the consequences.</desc>
+  <rect width="1280" height="320" rx="16" fill="#0b1220"/>
+  <g fill="none" stroke="#2dd4bf" stroke-width="2">
+    <circle cx="1060" cy="160" r="18" fill="#2dd4bf" stroke="none"/>
+    <circle cx="1060" cy="160" r="52" opacity="0.85"/>
+    <circle cx="1060" cy="160" r="92" opacity="0.6"/>
+    <circle cx="1060" cy="160" r="136" opacity="0.38"/>
+    <circle cx="1060" cy="160" r="184" opacity="0.2"/>
+    <circle cx="1060" cy="160" r="236" opacity="0.1"/>
+  </g>
+  <text x="96" y="168" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="88" font-weight="800" letter-spacing="-2" fill="#f8fafc">Ripple<tspan fill="#2dd4bf">Fix</tspan></text>
+  <text x="100" y="224" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="28" fill="#94a3b8">Change code once. Handle the consequences.</text>
+</svg>
