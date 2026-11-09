@@ -24,6 +24,9 @@ uses [Semantic Versioning](https://semver.org).
 - Supply-chain security: cargo-deny policy, CodeQL, Dependabot, SHA-pinned
   actions, CODEOWNERS, and `docs/compliance.md` (standards alignment).
 
+- Contributor experience: Code of Conduct, quick-start contributing guide,
+  dev container for Codespaces, issue labels, and Discussions.
+
 ### Fixed
 
 - `Field(alias=...)` arguments no longer count as part of a field default,
