@@ -1,0 +1,19 @@
+[package]
+name = "ripplefix-core"
+description = "Core domain model, change detection, and plugin interface for RippleFix."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

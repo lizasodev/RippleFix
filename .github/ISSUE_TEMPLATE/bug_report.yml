@@ -1,0 +1,24 @@
+name: Bug report
+description: RippleFix reported something wrong, missed a change, or crashed
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the command you ran and its output (`--format json` and `-vv` help a lot).
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The smallest before and after source that shows the problem.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ripplefix --version and OS
+    validations:
+      required: true
