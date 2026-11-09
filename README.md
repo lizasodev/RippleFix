@@ -1,10 +1,14 @@
-# RippleFix
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="RippleFix: change code once, handle the consequences." width="100%">
+</p>
 
-**Change code once. Handle the consequences.**
+<p align="center">
 
-[![CI](https://github.com/lizasodev/ripplefix/actions/workflows/ci.yml/badge.svg)](https://github.com/lizasodev/ripplefix/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/lizasodev/ripplefix/actions/workflows/codeql.yml/badge.svg)](https://github.com/lizasodev/ripplefix/actions/workflows/codeql.yml)
+[![CI](https://github.com/lizasodev/RippleFix/actions/workflows/ci.yml/badge.svg)](https://github.com/lizasodev/RippleFix/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/lizasodev/RippleFix/actions/workflows/codeql.yml/badge.svg)](https://github.com/lizasodev/RippleFix/actions/workflows/codeql.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+</p>
 
 When you rename a field in a Pydantic model, the API changes, and so do the
 TypeScript types, the frontend code, and the tests that depend on it.
@@ -82,7 +86,7 @@ Requirements: Rust 1.85 or later, Git, and a C compiler (MSVC Build Tools on
 Windows, Xcode CLT on macOS, `build-essential` on Linux).
 
 ```sh
-git clone https://github.com/lizasodev/ripplefix
+git clone https://github.com/lizasodev/RippleFix
 cd ripplefix
 cargo install --locked --path crates/ripplefix-cli
 ripplefix doctor

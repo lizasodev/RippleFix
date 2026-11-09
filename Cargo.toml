@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/lizasodev/ripplefix"
+repository = "https://github.com/lizasodev/RippleFix"
 rust-version = "1.85"
 
 [workspace.dependencies]
