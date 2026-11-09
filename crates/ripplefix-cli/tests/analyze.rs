@@ -171,3 +171,113 @@ fn untracked_python_files_are_analyzed() {
     assert_eq!(v["files"][0]["changes"][0]["type"], "model_added");
     assert_eq!(v["files"][0]["delta"]["status"], "untracked");
 }
+
+fn impact_json(dir: &Path) -> Value {
+    let out = ripplefix(dir, &["impact", "--format", "json"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+fn items<'a>(v: &'a Value, kind: &str) -> Vec<&'a Value> {
+    v["impacts"][0]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["kind"] == kind)
+        .collect()
+}
+
+#[test]
+fn impact_traces_rename_to_routes_typescript_and_tests() {
+    let r = repo();
+    edit(
+        r.path(),
+        "backend/app/models.py",
+        "full_name: str",
+        "display_name: str",
+    );
+    let v = impact_json(r.path());
+    assert_eq!(v["impacts"].as_array().unwrap().len(), 1);
+
+    let models: Vec<_> = items(&v, "model")
+        .iter()
+        .map(|i| i["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(models, ["UserCreate", "UserRead"]);
+
+    let routes = items(&v, "route");
+    assert_eq!(routes.len(), 3);
+    assert!(routes.iter().all(|r| r["confidence"] == "confirmed"));
+    assert!(
+        routes
+            .iter()
+            .any(|r| r["label"] == "GET /users/{user_id} (get_user)")
+    );
+
+    let ts = items(&v, "typescript_type");
+    assert_eq!(ts.len(), 1);
+    assert_eq!(ts[0]["label"], "UserRead");
+    assert_eq!(ts[0]["confidence"], "inferred");
+
+    let uses = items(&v, "typescript_usage");
+    assert_eq!(uses.len(), 1);
+    assert_eq!(uses[0]["span"]["start_line"], 16);
+
+    let tests = items(&v, "test");
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0]["file"], "backend/tests/test_users.py");
+
+    let edges = v["graph"]["edges"].as_array().unwrap();
+    assert!(
+        edges
+            .iter()
+            .any(|e| e["kind"] == "mirrored_by" && e["confidence"] == "inferred")
+    );
+}
+
+#[test]
+fn alias_preserving_rename_has_no_impact() {
+    let r = repo();
+    edit(
+        r.path(),
+        "backend/app/models.py",
+        "full_name: str",
+        "display_name: str = Field(alias=\"full_name\")",
+    );
+    let v = impact_json(r.path());
+    assert_eq!(v["impacts"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn unrelated_typescript_types_are_not_matched() {
+    let r = repo();
+    std::fs::write(
+        r.path().join("frontend/src/other.ts"),
+        "export interface Profile { full_name: string; avatar: string }\nexport const n = (p: Profile) => p.full_name;\n",
+    )
+    .unwrap();
+    edit(
+        r.path(),
+        "backend/app/models.py",
+        "full_name: str",
+        "display_name: str",
+    );
+    let v = impact_json(r.path());
+    // `Profile` has a key the model never had, so it is not a mirror of it...
+    assert!(
+        items(&v, "typescript_type")
+            .iter()
+            .all(|t| t["label"] != "Profile")
+    );
+    // ...and its usage of the key is reported, but only as unresolved.
+    let other: Vec<_> = items(&v, "typescript_usage")
+        .into_iter()
+        .filter(|u| u["file"] == "frontend/src/other.ts")
+        .collect();
+    assert_eq!(other.len(), 1);
+    assert_eq!(other[0]["confidence"], "unresolved");
+}

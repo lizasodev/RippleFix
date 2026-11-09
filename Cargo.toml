@@ -6,12 +6,14 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/ripplefix/ripplefix"
+repository = "https://github.com/Zer0Dev-exe/ripplefix"
 rust-version = "1.85"
 
 [workspace.dependencies]
 ripplefix-core = { path = "crates/ripplefix-core", version = "0.1.0" }
 ripplefix-python = { path = "crates/ripplefix-python", version = "0.1.0" }
+ripplefix-typescript = { path = "crates/ripplefix-typescript", version = "0.1.0" }
+ripplefix-impact = { path = "crates/ripplefix-impact", version = "0.1.0" }
 anyhow = "1"
 clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
@@ -21,6 +23,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tree-sitter = "0.25"
 tree-sitter-python = "0.25"
+tree-sitter-typescript = "0.23"
+petgraph = { version = "0.8", default-features = false, features = ["graphmap", "stable_graph", "serde-1"] }
 tempfile = "3"
 
 [workspace.lints.rust]

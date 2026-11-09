@@ -1,20 +1,22 @@
-//! Python / Pydantic analyzer for RippleFix.
+//! Python / Pydantic / FastAPI analyzer for RippleFix.
 //!
 //! Classification rules (all syntactic and deterministic):
 //! * A class is a Pydantic model if a base is `BaseModel` imported from
 //!   `pydantic` (including `as` aliases), `pydantic.BaseModel` with
 //!   `import pydantic`, or another model class defined in the same file.
+//!   Cross-file inheritance is resolved at project level by `ripplefix-impact`.
 //! * Fields are annotated class-level assignments, excluding private
 //!   (`_x`) names, `model_config`, and `ClassVar` annotations.
 //! * A field wire name is resolved only from string-literal `alias=` /
 //!   `serialization_alias=` arguments to `Field(...)`. A class configuring an
 //!   `alias_generator` marks fields without a literal alias as unresolved.
-//!
-//! Known limitations: fields inherited from models in *other* files are not
-//! merged, and alias generators inherited from base classes are not detected.
+//! * A FastAPI route is a function decorated with `<obj>.get|post|put|patch|
+//!   delete|api_route(...)`; its response types come from `response_model=`
+//!   or, if absent, from the return annotation.
 
 use ripplefix_core::model::{DataModel, Evidence, Field, FileSnapshot, ModelKind, Span};
 use ripplefix_core::plugin::{AnalysisError, LanguageAnalyzer, PLUGIN_API_VERSION};
+use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
 use tree_sitter::{Node, Parser};
@@ -32,76 +34,175 @@ impl LanguageAnalyzer for PydanticAnalyzer {
     }
 
     fn handles(&self, path: &Path) -> bool {
-        matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("py" | "pyi")
-        )
+        is_python(path)
     }
 
     fn extract(&self, source: &str) -> Result<FileSnapshot, AnalysisError> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_python::LANGUAGE.into())
-            .map_err(|e| AnalysisError::Parser(e.to_string()))?;
-        let tree = parser
-            .parse(source, None)
-            .ok_or_else(|| AnalysisError::Parser("parse cancelled".into()))?;
-        let root = tree.root_node();
-        if root.has_error() {
-            let mut lines = Vec::new();
-            collect_error_lines(root, &mut lines);
-            return Err(AnalysisError::SyntaxError { lines });
-        }
-        let src = source.as_bytes();
-        let imports = Imports::collect(root, src);
-
-        let mut classes = Vec::new();
-        collect_classes(root, src, "", &mut classes);
-
-        // Fixpoint: classes inheriting from same-file models are models too.
-        let mut model_names: HashSet<String> = HashSet::new();
-        let mut reasons: Vec<Option<String>> = vec![None; classes.len()];
-        loop {
-            let mut grew = false;
-            for (i, c) in classes.iter().enumerate() {
-                if reasons[i].is_some() {
-                    continue;
-                }
-                if let Some(r) = c
-                    .bases
-                    .iter()
-                    .find_map(|b| imports.model_reason(b, &model_names))
-                {
-                    reasons[i] = Some(r);
-                    model_names.insert(c.simple_name.clone());
-                    grew = true;
-                }
-            }
-            if !grew {
-                break;
-            }
-        }
-
-        let models = classes
-            .into_iter()
-            .zip(reasons)
-            .filter_map(|(c, reason)| {
-                let reason = reason?;
-                Some(DataModel {
-                    kind: ModelKind::PydanticModel,
-                    evidence: Evidence::new(format!("class `{}` {reason}", c.qualified_name)),
-                    qualified_name: c.qualified_name,
-                    bases: c.bases,
-                    fields: extract_fields(c.body, src, &imports),
-                    span: span(c.node),
-                })
-            })
-            .collect();
-        Ok(FileSnapshot { models })
+        Ok(parse_module(source)?.snapshot())
     }
 }
 
-struct ClassInfo<'t> {
+pub fn is_python(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("py" | "pyi")
+    )
+}
+
+/// A class definition (model or not) with its annotated fields.
+#[derive(Debug, Clone, Serialize)]
+pub struct PyClass {
+    pub qualified_name: String,
+    pub simple_name: String,
+    pub bases: Vec<String>,
+    pub fields: Vec<Field>,
+    pub span: Span,
+    /// Set when the class is a Pydantic model by same-file evidence.
+    pub local_model_reason: Option<String>,
+}
+
+/// `from <module> import <name> as <local>` (or `import <module> as <local>`
+/// with `name == None`). `level` counts leading dots of relative imports.
+#[derive(Debug, Clone, Serialize)]
+pub struct PyImport {
+    pub local: String,
+    pub module: String,
+    pub level: usize,
+    pub name: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseSource {
+    ResponseModel,
+    ReturnAnnotation,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Route {
+    pub method: String,
+    pub path: Option<String>,
+    pub function: String,
+    /// Names referenced by the response type, e.g. `["list", "UserRead"]`.
+    pub response_names: Vec<String>,
+    pub response_source: ResponseSource,
+    /// Names referenced by typed parameters (request bodies, query models).
+    pub request_names: Vec<String>,
+    pub span: Span,
+}
+
+/// A call like `client.get("/users/1")` (typically in tests).
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpCall {
+    pub method: String,
+    pub url: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModuleInfo {
+    pub classes: Vec<PyClass>,
+    pub imports: Vec<PyImport>,
+    pub routes: Vec<Route>,
+    pub http_calls: Vec<HttpCall>,
+    /// Plain string literal values with their location.
+    pub strings: Vec<(String, Span)>,
+}
+
+impl ModuleInfo {
+    /// Models identifiable from this file alone.
+    pub fn snapshot(&self) -> FileSnapshot {
+        FileSnapshot {
+            models: self
+                .classes
+                .iter()
+                .filter_map(|c| {
+                    let reason = c.local_model_reason.as_ref()?;
+                    Some(DataModel {
+                        kind: ModelKind::PydanticModel,
+                        evidence: Evidence::new(format!("class `{}` {reason}", c.qualified_name)),
+                        qualified_name: c.qualified_name.clone(),
+                        bases: c.bases.clone(),
+                        fields: c.fields.clone(),
+                        span: c.span,
+                    })
+                })
+                .collect(),
+        }
+    }
+}
+
+const HTTP_METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options"];
+
+/// Parse a Python module. Fails on syntax errors rather than guessing.
+pub fn parse_module(source: &str) -> Result<ModuleInfo, AnalysisError> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_python::LANGUAGE.into())
+        .map_err(|e| AnalysisError::Parser(e.to_string()))?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| AnalysisError::Parser("parse cancelled".into()))?;
+    let root = tree.root_node();
+    if root.has_error() {
+        let mut lines = Vec::new();
+        collect_error_lines(root, &mut lines);
+        return Err(AnalysisError::SyntaxError { lines });
+    }
+    let src = source.as_bytes();
+    let pyd = PydanticNames::collect(root, src);
+
+    let mut raw = Vec::new();
+    collect_classes(root, src, "", &mut raw);
+
+    // Fixpoint: classes inheriting from same-file models are models too.
+    let mut model_names: HashSet<String> = HashSet::new();
+    let mut reasons: Vec<Option<String>> = vec![None; raw.len()];
+    loop {
+        let mut grew = false;
+        for (i, c) in raw.iter().enumerate() {
+            if reasons[i].is_some() {
+                continue;
+            }
+            if let Some(r) = c
+                .bases
+                .iter()
+                .find_map(|b| pyd.model_reason(b, &model_names))
+            {
+                reasons[i] = Some(r);
+                model_names.insert(c.simple_name.clone());
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+
+    let classes = raw
+        .into_iter()
+        .zip(reasons)
+        .map(|(c, reason)| PyClass {
+            fields: extract_fields(c.body, src, &pyd),
+            span: span(c.node),
+            qualified_name: c.qualified_name,
+            simple_name: c.simple_name,
+            bases: c.bases,
+            local_model_reason: reason,
+        })
+        .collect();
+
+    let mut info = ModuleInfo {
+        classes,
+        imports: collect_imports(root, src),
+        ..Default::default()
+    };
+    walk_module(root, src, &mut info);
+    Ok(info)
+}
+
+struct RawClass<'t> {
     node: Node<'t>,
     body: Node<'t>,
     simple_name: String,
@@ -138,7 +239,7 @@ fn collect_error_lines(n: Node, out: &mut Vec<usize>) {
 
 /// Recursively find classes; nesting inside functions is skipped because such
 /// classes are not importable API contracts.
-fn collect_classes<'t>(n: Node<'t>, src: &[u8], prefix: &str, out: &mut Vec<ClassInfo<'t>>) {
+fn collect_classes<'t>(n: Node<'t>, src: &[u8], prefix: &str, out: &mut Vec<RawClass<'t>>) {
     let mut cur = n.walk();
     for child in n.named_children(&mut cur) {
         match child.kind() {
@@ -166,7 +267,7 @@ fn collect_classes<'t>(n: Node<'t>, src: &[u8], prefix: &str, out: &mut Vec<Clas
                     })
                     .unwrap_or_default();
                 collect_classes(body, src, &qualified, out);
-                out.push(ClassInfo {
+                out.push(RawClass {
                     node: child,
                     body,
                     simple_name: simple,
@@ -180,51 +281,70 @@ fn collect_classes<'t>(n: Node<'t>, src: &[u8], prefix: &str, out: &mut Vec<Clas
     }
 }
 
+fn collect_imports(root: Node, src: &[u8]) -> Vec<PyImport> {
+    let mut out = Vec::new();
+    let mut cur = root.walk();
+    for stmt in root.named_children(&mut cur) {
+        match stmt.kind() {
+            "import_from_statement" => {
+                let Some(m) = stmt.child_by_field_name("module_name") else {
+                    continue;
+                };
+                let raw = text(m, src);
+                let level = raw.chars().take_while(|c| *c == '.').count();
+                let module = raw[level..].to_owned();
+                let mut c = stmt.walk();
+                for name in stmt.children_by_field_name("name", &mut c) {
+                    let (orig, local) = imported_name(name, src);
+                    out.push(PyImport {
+                        local: local.to_owned(),
+                        module: module.clone(),
+                        level,
+                        name: Some(orig.to_owned()),
+                        span: span(stmt),
+                    });
+                }
+            }
+            "import_statement" => {
+                let mut c = stmt.walk();
+                for name in stmt.children_by_field_name("name", &mut c) {
+                    let (orig, local) = imported_name(name, src);
+                    out.push(PyImport {
+                        local: local.to_owned(),
+                        module: orig.to_owned(),
+                        level: 0,
+                        name: None,
+                        span: span(stmt),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Names under which `pydantic`, `pydantic.BaseModel`, and `pydantic.Field`
 /// are visible in a module.
 #[derive(Default)]
-struct Imports {
+struct PydanticNames {
     base_model: HashSet<String>,
     field_fn: HashSet<String>,
     module: HashSet<String>,
 }
 
-impl Imports {
+impl PydanticNames {
     fn collect(root: Node, src: &[u8]) -> Self {
-        let mut imp = Imports::default();
-        let mut cur = root.walk();
-        for stmt in root.named_children(&mut cur) {
-            match stmt.kind() {
-                "import_from_statement" => {
-                    let module = stmt
-                        .child_by_field_name("module_name")
-                        .map(|m| text(m, src));
-                    if module != Some("pydantic") {
-                        continue;
-                    }
-                    let mut c = stmt.walk();
-                    for name in stmt.children_by_field_name("name", &mut c) {
-                        let (orig, local) = imported_name(name, src);
-                        match orig {
-                            "BaseModel" => imp.base_model.insert(local.to_owned()),
-                            "Field" => imp.field_fn.insert(local.to_owned()),
-                            _ => false,
-                        };
-                    }
-                }
-                "import_statement" => {
-                    let mut c = stmt.walk();
-                    for name in stmt.children_by_field_name("name", &mut c) {
-                        let (orig, local) = imported_name(name, src);
-                        if orig == "pydantic" {
-                            imp.module.insert(local.to_owned());
-                        }
-                    }
-                }
-                _ => {}
-            }
+        let mut p = PydanticNames::default();
+        for imp in collect_imports(root, src) {
+            match (imp.level, imp.module.as_str(), imp.name.as_deref()) {
+                (0, "pydantic", Some("BaseModel")) => p.base_model.insert(imp.local),
+                (0, "pydantic", Some("Field")) => p.field_fn.insert(imp.local),
+                (0, "pydantic", None) => p.module.insert(imp.local),
+                _ => false,
+            };
         }
-        imp
+        p
     }
 
     fn model_reason(&self, base: &str, same_file_models: &HashSet<String>) -> Option<String> {
@@ -269,7 +389,7 @@ fn imported_name<'a>(n: Node, src: &'a [u8]) -> (&'a str, &'a str) {
     }
 }
 
-fn extract_fields(body: Node, src: &[u8], imports: &Imports) -> Vec<Field> {
+fn extract_fields(body: Node, src: &[u8], pyd: &PydanticNames) -> Vec<Field> {
     let has_alias_generator = class_has_alias_generator(body, src);
     let mut fields = Vec::new();
     let mut cur = body.walk();
@@ -299,31 +419,60 @@ fn extract_fields(body: Node, src: &[u8], imports: &Imports) -> Vec<Field> {
             continue;
         }
         let right = assign.child_by_field_name("right");
-        let (alias, explicit_dynamic_alias) = right
-            .map(|r| field_alias(r, src, imports))
+        let (alias, dynamic_alias) = right
+            .map(|r| field_alias(r, src, pyd))
             .unwrap_or((None, false));
-        let alias_unresolved = explicit_dynamic_alias || (has_alias_generator && alias.is_none());
         fields.push(Field {
             name: name.to_owned(),
             annotation,
-            default: right.map(|r| normalize(r, src)),
+            default: right.and_then(|r| default_expr(r, src, pyd)),
+            alias_unresolved: dynamic_alias || (has_alias_generator && alias.is_none()),
             alias,
-            alias_unresolved,
             span: span(stmt),
         });
     }
     fields
 }
 
+/// Alias-related keyword arguments of `Field(...)`. They control the JSON key,
+/// which is tracked separately, so they are not part of the default.
+const ALIAS_KWARGS: &[&str] = &["alias", "serialization_alias", "validation_alias"];
+
+/// The default/constraint part of a field assignment. For `Field(...)` calls,
+/// alias arguments are dropped, and `Field()` with nothing left means required.
+fn default_expr(right: Node, src: &[u8], pyd: &PydanticNames) -> Option<String> {
+    let is_field = right.kind() == "call"
+        && right
+            .child_by_field_name("function")
+            .is_some_and(|f| pyd.is_field_call(text(f, src)));
+    if !is_field {
+        return Some(normalize(right, src));
+    }
+    let args = right.child_by_field_name("arguments")?;
+    let mut cur = args.walk();
+    let kept: Vec<String> = args
+        .named_children(&mut cur)
+        .filter(|a| a.kind() != "comment")
+        .filter(|a| {
+            a.kind() != "keyword_argument"
+                || !a
+                    .child_by_field_name("name")
+                    .is_some_and(|n| ALIAS_KWARGS.contains(&text(n, src)))
+        })
+        .map(|a| normalize(a, src))
+        .collect();
+    (!kept.is_empty()).then(|| format!("Field({})", kept.join(",")))
+}
+
 /// Returns `(literal_alias, alias_is_dynamic)` for a `Field(...)` call.
-fn field_alias(right: Node, src: &[u8], imports: &Imports) -> (Option<String>, bool) {
+fn field_alias(right: Node, src: &[u8], pyd: &PydanticNames) -> (Option<String>, bool) {
     if right.kind() != "call" {
         return (None, false);
     }
     let Some(func) = right.child_by_field_name("function") else {
         return (None, false);
     };
-    if !imports.is_field_call(text(func, src)) {
+    if !pyd.is_field_call(text(func, src)) {
         return (None, false);
     }
     let Some(args) = right.child_by_field_name("arguments") else {
@@ -366,6 +515,13 @@ fn string_literal(n: Node, src: &[u8]) -> Option<String> {
     if n.kind() != "string" {
         return None;
     }
+    let prefix: String = text(n, src)
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphabetic())
+        .collect();
+    if prefix.to_ascii_lowercase().contains('f') {
+        return None;
+    }
     let mut cur = n.walk();
     let mut content = String::new();
     for c in n.named_children(&mut cur) {
@@ -374,13 +530,6 @@ fn string_literal(n: Node, src: &[u8]) -> Option<String> {
             "string_content" => content.push_str(text(c, src)),
             _ => return None, // interpolation or escape sequence
         }
-    }
-    let prefix = text(n, src)
-        .chars()
-        .take_while(|ch| ch.is_ascii_alphabetic())
-        .collect::<String>();
-    if prefix.to_ascii_lowercase().contains('f') {
-        return None;
     }
     Some(content)
 }
@@ -397,6 +546,164 @@ fn class_has_alias_generator(body: Node, src: &[u8]) -> bool {
                     .is_some_and(|n| text(n, src) == "Config"));
         is_config && t.contains("alias_generator")
     })
+}
+
+/// Collect routes, HTTP calls, and string literals across the whole module.
+fn walk_module(n: Node, src: &[u8], info: &mut ModuleInfo) {
+    match n.kind() {
+        "decorated_definition" => {
+            if let Some(r) = route(n, src) {
+                info.routes.push(r);
+            }
+        }
+        // Route decorators are declarations, not client calls.
+        "decorator" => return,
+        "call" => {
+            if let Some(c) = http_call(n, src) {
+                info.http_calls.push(c);
+            }
+        }
+        "string" => {
+            if let Some(s) = string_literal(n, src) {
+                info.strings.push((s, span(n)));
+            }
+            return;
+        }
+        _ => {}
+    }
+    let mut cur = n.walk();
+    for c in n.named_children(&mut cur) {
+        walk_module(c, src, info);
+    }
+}
+
+/// `obj.method` where method is an HTTP verb; returns the verb.
+fn verb_of(func: Node, src: &[u8]) -> Option<String> {
+    if func.kind() != "attribute" {
+        return None;
+    }
+    let attr = text(func.child_by_field_name("attribute")?, src);
+    (HTTP_METHODS.contains(&attr) || attr == "api_route").then(|| attr.to_owned())
+}
+
+fn first_string_arg(call: Node, src: &[u8]) -> Option<String> {
+    let args = call.child_by_field_name("arguments")?;
+    let mut cur = args.walk();
+    let first = args.named_children(&mut cur).next()?;
+    string_literal(first, src)
+}
+
+fn keyword_arg<'t>(call: Node<'t>, src: &[u8], key: &str) -> Option<Node<'t>> {
+    let args = call.child_by_field_name("arguments")?;
+    let mut cur = args.walk();
+    let found = args.named_children(&mut cur).find(|a| {
+        a.kind() == "keyword_argument"
+            && a.child_by_field_name("name").map(|n| text(n, src)) == Some(key)
+    })?;
+    found.child_by_field_name("value")
+}
+
+fn route(decorated: Node, src: &[u8]) -> Option<Route> {
+    let def = decorated.child_by_field_name("definition")?;
+    if def.kind() != "function_definition" {
+        return None;
+    }
+    let mut cur = decorated.walk();
+    for dec in decorated.named_children(&mut cur) {
+        if dec.kind() != "decorator" {
+            continue;
+        }
+        let Some(call) = dec.named_child(0).filter(|c| c.kind() == "call") else {
+            continue;
+        };
+        let Some(method) = call
+            .child_by_field_name("function")
+            .and_then(|f| verb_of(f, src))
+        else {
+            continue;
+        };
+        let (names, source) = match keyword_arg(call, src, "response_model") {
+            Some(rm) => (referenced_names(rm, src), ResponseSource::ResponseModel),
+            None => (
+                def.child_by_field_name("return_type")
+                    .map(|t| referenced_names(t, src))
+                    .unwrap_or_default(),
+                ResponseSource::ReturnAnnotation,
+            ),
+        };
+        let mut request_names = Vec::new();
+        if let Some(params) = def.child_by_field_name("parameters") {
+            let mut pc = params.walk();
+            for p in params.named_children(&mut pc) {
+                if matches!(p.kind(), "typed_parameter" | "typed_default_parameter") {
+                    if let Some(t) = p.child_by_field_name("type") {
+                        request_names.extend(referenced_names(t, src));
+                    }
+                }
+            }
+        }
+        return Some(Route {
+            request_names,
+            method,
+            path: first_string_arg(call, src),
+            function: text(def.child_by_field_name("name")?, src).to_owned(),
+            response_names: names,
+            response_source: source,
+            span: span(dec),
+        });
+    }
+    None
+}
+
+fn http_call(call: Node, src: &[u8]) -> Option<HttpCall> {
+    let method = verb_of(call.child_by_field_name("function")?, src)?;
+    let args = call.child_by_field_name("arguments")?;
+    let mut cur = args.walk();
+    let first = args.named_children(&mut cur).next()?;
+    let url = string_literal(first, src).or_else(|| fstring_prefix(first, src))?;
+    url.starts_with('/').then(|| HttpCall {
+        method,
+        url,
+        span: span(call),
+    })
+}
+
+/// For f-strings like `f"/users/{uid}"`, a template with `{}` placeholders.
+fn fstring_prefix(n: Node, src: &[u8]) -> Option<String> {
+    if n.kind() != "string" {
+        return None;
+    }
+    let mut out = String::new();
+    let mut cur = n.walk();
+    for c in n.named_children(&mut cur) {
+        match c.kind() {
+            "string_start" | "string_end" => {}
+            "string_content" => out.push_str(text(c, src)),
+            "interpolation" => out.push_str("{}"),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// Identifiers and dotted names referenced by a type expression.
+fn referenced_names(n: Node, src: &[u8]) -> Vec<String> {
+    fn walk(n: Node, src: &[u8], out: &mut Vec<String>) {
+        match n.kind() {
+            "identifier" => out.push(text(n, src).to_owned()),
+            "attribute" => out.push(normalize(n, src)),
+            "string" => {}
+            _ => {
+                let mut cur = n.walk();
+                for c in n.named_children(&mut cur) {
+                    walk(c, src, out);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(n, src, &mut out);
+    out
 }
 
 /// Token-level normalization: comments dropped, whitespace collapsed, so that
@@ -493,6 +800,22 @@ mod tests {
     }
 
     #[test]
+    fn alias_arguments_are_not_part_of_the_default() {
+        let s = extract(
+            "from pydantic import BaseModel, Field
+class M(BaseModel):
+    a: str = Field(alias='x')
+    b: str = Field('d', alias='y')
+    c: str = Field(min_length=3)
+",
+        );
+        let f = &s.models[0].fields;
+        assert_eq!(f[0].default, None);
+        assert_eq!(f[1].default.as_deref(), Some("Field('d')"));
+        assert_eq!(f[2].default.as_deref(), Some("Field(min_length=3)"));
+    }
+
+    #[test]
     fn skips_classvar_and_comments_do_not_matter() {
         let a = extract(
             "from pydantic import BaseModel\nfrom typing import ClassVar\nclass M(BaseModel):\n    k: ClassVar[int] = 1\n    a: int  # comment\n",
@@ -509,5 +832,29 @@ mod tests {
         let err = PydanticAnalyzer
             .extract("from pydantic import BaseModel\nclass M(BaseModel:\n    a: int\n");
         assert!(matches!(err, Err(AnalysisError::SyntaxError { .. })));
+    }
+
+    #[test]
+    fn extracts_routes_imports_and_http_calls() {
+        let m = parse_module(
+            "from .models import UserRead as UR\nimport app.db\n@router.get('/users/{uid}', response_model=list[UR])\ndef list_users(uid: int):\n    pass\n@app.post('/x')\nasync def mk() -> models.Thing:\n    pass\ndef test_it():\n    client.get(f'/users/{uid}')\n    client.post('/x', json={'full_name': 'a'})\n",
+        )
+        .unwrap();
+        assert_eq!(m.imports[0].level, 1);
+        assert_eq!(m.imports[0].module, "models");
+        assert_eq!(m.imports[0].local, "UR");
+        assert_eq!(m.imports[1].name, None);
+        assert_eq!(m.routes.len(), 2);
+        assert_eq!(m.routes[0].path.as_deref(), Some("/users/{uid}"));
+        assert_eq!(m.routes[0].response_names, ["list", "UR"]);
+        assert_eq!(m.routes[0].request_names, ["int"]);
+        assert_eq!(m.routes[1].response_names, ["models.Thing"]);
+        assert_eq!(
+            m.routes[1].response_source,
+            ResponseSource::ReturnAnnotation
+        );
+        let urls: Vec<_> = m.http_calls.iter().map(|c| c.url.as_str()).collect();
+        assert_eq!(urls, ["/users/{}", "/x"]);
+        assert!(m.strings.iter().any(|(s, _)| s == "full_name"));
     }
 }

@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 ripplefix-core.workspace = true
 ripplefix-python.workspace = true
+ripplefix-typescript.workspace = true
+ripplefix-impact.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
