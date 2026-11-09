@@ -54,6 +54,10 @@ pub struct Change {
     pub confidence: Confidence,
     /// Whether the change alters the serialized API contract.
     pub breaks_wire_contract: bool,
+    /// JSON key of the affected field before the change, when statically known.
+    pub old_key: Option<String>,
+    /// JSON key of the affected field after the change, when statically known.
+    pub new_key: Option<String>,
     pub evidence: Vec<Evidence>,
 }
 
@@ -77,6 +81,8 @@ pub fn diff_snapshots(
                     Evidence::new(format!("model `{}` no longer present", om.qualified_name))
                         .at(old_path, om.span),
                 ],
+                old_key: None,
+                new_key: None,
             }),
             Some(nm) => diff_model(om, nm, old_path, new_path, &mut changes),
         }
@@ -89,10 +95,35 @@ pub fn diff_snapshots(
                 confidence: Confidence::Confirmed,
                 breaks_wire_contract: false,
                 evidence: vec![nm.evidence.clone()],
+                old_key: None,
+                new_key: None,
             });
         }
     }
+    for c in &mut changes {
+        fill_keys(c, old, new);
+    }
     changes
+}
+
+/// Attach the old/new JSON keys of the field a change refers to.
+fn fill_keys(c: &mut Change, old: &FileSnapshot, new: &FileSnapshot) {
+    let key = |snap: &FileSnapshot, field: &str| {
+        snap.model(&c.model)
+            .and_then(|m| m.field(field))
+            .and_then(|f| f.wire_name().map(str::to_owned))
+    };
+    let (o, n) = match &c.kind {
+        ChangeKind::FieldRenamed { old: of, new: nf } => (key(old, of), key(new, nf)),
+        ChangeKind::FieldRemoved { field } => (key(old, field), None),
+        ChangeKind::FieldAdded { field } => (None, key(new, field)),
+        ChangeKind::FieldTypeChanged { field, .. }
+        | ChangeKind::FieldDefaultChanged { field, .. } => (key(old, field), key(new, field)),
+        ChangeKind::WireNameChanged { old, new, .. } => (old.clone(), new.clone()),
+        _ => (None, None),
+    };
+    c.old_key = o;
+    c.new_key = n;
 }
 
 fn diff_model(om: &DataModel, nm: &DataModel, op: &str, np: &str, out: &mut Vec<Change>) {
@@ -103,6 +134,8 @@ fn diff_model(om: &DataModel, nm: &DataModel, op: &str, np: &str, out: &mut Vec<
             kind,
             confidence,
             breaks_wire_contract: breaks,
+            old_key: None,
+            new_key: None,
             evidence,
         })
     };

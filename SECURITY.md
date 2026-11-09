@@ -18,6 +18,9 @@ bugs:
   changes.
 * Any network access. RippleFix is local-only.
 
+Supply-chain controls (RustSec audit, license policy, CodeQL, pinned
+actions) are described in [docs/compliance.md](docs/compliance.md).
+
 See [the security model in docs/architecture.md](docs/architecture.md#security-model).
 
 ## Supported versions

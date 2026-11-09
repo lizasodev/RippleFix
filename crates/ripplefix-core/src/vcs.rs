@@ -123,6 +123,21 @@ impl Repository {
             .and_then(|b| String::from_utf8(b).ok())
     }
 
+    /// All tracked and untracked-but-not-ignored files, sorted and deduplicated.
+    pub fn list_files(&self) -> Result<Vec<String>, GitError> {
+        let out = self.git(&[
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])?;
+        let mut files = split_z(&out).map(utf8).collect::<Result<Vec<_>, _>>()?;
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
+
     /// Whether the working tree has staged, unstaged, or untracked changes.
     pub fn is_dirty(&self) -> Result<bool, GitError> {
         Ok(!self.git(&["status", "--porcelain", "-z"])?.is_empty())

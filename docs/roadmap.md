@@ -10,9 +10,9 @@ Scenario: in `examples/fastapi-pydantic-ts`, rename `UserBase.full_name` to
 | # | Acceptance criterion | Status |
 |---|---|---|
 | 1 | Detect the rename as a structural change with evidence and `inferred` confidence. Formatting-only edits are reported as `cosmetic` | ✅ |
-| 2 | Identify affected API contracts: FastAPI routes whose `response_model` (or return annotation) is the model or a subclass, including models from other files | ⬜ |
-| 3 | Identify TypeScript consumers: interfaces or types with a matching field set, plus property accesses on values of those types (Tree-sitter TypeScript) | ⬜ |
-| 4 | Find tests and fixtures that use the old JSON key in literals tied to affected routes | ⬜ |
+| 2 | Identify affected API contracts: FastAPI routes whose `response_model`, return annotation, or typed parameter is the model or a subclass, including models from other files | ✅ |
+| 3 | Identify TypeScript consumers: interfaces or types with a matching field set, plus property accesses on values of those types (Tree-sitter TypeScript) | ✅ (inferred, since there is no type checker) |
+| 4 | Find tests and fixtures that use the old JSON key in literals tied to affected routes | 🚧 Python tests done. TypeScript tests are found only as key usages |
 | 5 | Generate patches only for confirmed edges. Unresolved candidates are listed, not patched | ⬜ |
 | 6 | Show a unified diff, and support `--dry-run` | ⬜ |
 | 7 | Apply atomically. Refuse to touch files with uncommitted user changes. Support rollback through a stored reverse patch | ⬜ |
@@ -25,9 +25,10 @@ Scenario: in `examples/fastapi-pydantic-ts`, rename `UserBase.full_name` to
   CI (Linux, Windows, and macOS, plus an MSRV check), architecture docs.
   ⬜ The pnpm workspace is deferred until the first TypeScript package
   (the VS Code extension) exists, so it doesn't start out empty.
-* **Phase 2, Core analysis:** ✅ Git change detection and Pydantic
-  extraction. ⬜ Cross-file model resolution, project symbol index, petgraph
-  impact graph, FastAPI route extraction, TypeScript analyzer.
+* **Phase 2, Core analysis:** ✅ Git change detection, Pydantic
+  extraction, cross-file import resolution, project index, petgraph impact
+  graph, FastAPI route extraction, TypeScript analyzer.
+  ⬜ Incremental index cache.
 * **Phase 3, Automation:** ⬜ Rule engine, patch system, validation, rollback,
   TOML recipes.
 * **Phase 4, Developer experience:** ⬜ `ripplefix serve`, VS Code extension,
@@ -37,7 +38,13 @@ Scenario: in `examples/fastapi-pydantic-ts`, rename `UserBase.full_name` to
 
 ## Known limitations (current)
 
-* Fields inherited from models in other files are not merged.
+* `analyze` (single-file change detection) does not yet see models whose
+  only Pydantic base is imported from another file. `impact` does.
+* Python attribute uses of a field (`payload.full_name`) are not yet listed.
+* Routes registered under `APIRouter(prefix=...)` or `include_router(prefix=...)`
+  are matched to tests without the prefix, so those tests are missed. No
+  false links are created.
+* `impact` parses all Python and TypeScript files on each run (no cache yet).
 * An `alias_generator` inherited from a base class is not detected.
-* Only `.py` and `.pyi` files are analyzed. Other changed files are counted as
+* `analyze` reports structural changes only for `.py` and `.pyi` files. Other changed files are counted as
   unsupported.

@@ -43,8 +43,41 @@ enum Command {
         #[arg(long)]
         fail_on_breaking: bool,
     },
+    /// Trace breaking changes to routes, TypeScript consumers, and tests.
+    Impact {
+        /// Base revision to compare against.
+        #[arg(long, short, default_value = "HEAD")]
+        base: String,
+        #[arg(long, value_enum, default_value_t = Format::Human)]
+        format: Format,
+    },
     /// Check that the environment and repository are usable.
     Doctor,
+}
+
+/// Files larger than this are not indexed (generated or vendored code).
+const MAX_INDEXED_FILE_BYTES: u64 = 2 * 1024 * 1024;
+
+fn build_index(repo: &Repository) -> Result<ripplefix_impact::ProjectIndex> {
+    let mut sources = Vec::new();
+    for path in repo.list_files()? {
+        let p = std::path::Path::new(&path);
+        if !(ripplefix_python::is_python(p) || ripplefix_typescript::is_typescript(p)) {
+            continue;
+        }
+        let full = repo.root().join(p);
+        match std::fs::metadata(&full) {
+            Ok(m) if m.is_file() && m.len() <= MAX_INDEXED_FILE_BYTES => {}
+            _ => {
+                tracing::info!(%path, "skipped: missing, not a regular file, or too large");
+                continue;
+            }
+        }
+        if let Some(text) = repo.read_worktree(&path) {
+            sources.push(ripplefix_impact::SourceFile { path, text });
+        }
+    }
+    Ok(ripplefix_impact::ProjectIndex::build(sources))
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -101,6 +134,17 @@ fn run(cli: Cli) -> Result<ExitCode> {
             } else {
                 ExitCode::SUCCESS
             })
+        }
+        Command::Impact { base, format } => {
+            let repo = Repository::discover(&cli.repo).context("not inside a Git repository")?;
+            let report = ripplefix_core::analyze_worktree(&repo, &base, &analyzers())?;
+            let index = build_index(&repo)?;
+            let impact = ripplefix_impact::compute_impact(&index, &report);
+            match format {
+                Format::Json => println!("{}", serde_json::to_string_pretty(&impact)?),
+                Format::Human => print!("{}", render::impact(&impact)),
+            }
+            Ok(ExitCode::SUCCESS)
         }
         Command::Doctor => {
             let mut ok = true;

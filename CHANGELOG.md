@@ -17,3 +17,14 @@ uses [Semantic Versioning](https://semver.org).
 - Versioned analyzer plugin interface (API v1).
 - `examples/fastapi-pydantic-ts` fixture and end-to-end tests.
 - CI on Linux, Windows, and macOS, plus an MSRV check.
+- `ripplefix impact`: traces breaking field changes to subclass models
+  (across files), FastAPI routes, TypeScript types and usages, and Python
+  tests, with an exportable evidence graph.
+- `ripplefix-typescript` and `ripplefix-impact` crates.
+- Supply-chain security: cargo-deny policy, CodeQL, Dependabot, SHA-pinned
+  actions, CODEOWNERS, and `docs/compliance.md` (standards alignment).
+
+### Fixed
+
+- `Field(alias=...)` arguments no longer count as part of a field default,
+  so an alias-preserving rename is correctly recognized as non-breaking.

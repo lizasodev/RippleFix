@@ -1,0 +1,17 @@
+[package]
+name = "ripplefix-typescript"
+description = "TypeScript consumer analyzer for RippleFix (Tree-sitter based)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ripplefix-core.workspace = true
+tree-sitter.workspace = true
+tree-sitter-typescript.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

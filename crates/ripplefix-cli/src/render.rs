@@ -95,3 +95,48 @@ fn line(c: &Change) -> String {
     };
     format!("{}: {what} ({conf}){brk}", c.model)
 }
+
+pub fn impact(r: &ripplefix_impact::ImpactReport) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "RippleFix impact ({} files indexed)\n",
+        r.indexed_files
+    );
+    if r.impacts.is_empty() {
+        let _ = writeln!(out, "No breaking field-level changes to trace.");
+    }
+    for ci in &r.impacts {
+        let _ = writeln!(out, "{}  {}", ci.file, line(&ci.change));
+        for note in &ci.notes {
+            let _ = writeln!(out, "    note: {note}");
+        }
+        for it in &ci.items {
+            let conf = match it.confidence {
+                Confidence::Confirmed => "confirmed",
+                Confidence::Inferred => "INFERRED",
+                Confidence::Unresolved => "UNRESOLVED",
+            };
+            let kind = format!("{:?}", it.kind);
+            let _ = writeln!(
+                out,
+                "    [{conf:>10}] {kind:<15} {}  {}:{}",
+                it.label, it.file, it.span.start_line
+            );
+            for e in &it.evidence {
+                if let (Some(f), Some(s)) = (&e.file, e.span) {
+                    let _ = writeln!(
+                        out,
+                        "                   evidence: {} {f}:{}",
+                        e.description, s.start_line
+                    );
+                }
+            }
+        }
+        let _ = writeln!(out);
+    }
+    for (path, err) in &r.unparsed_files {
+        let _ = writeln!(out, "not searched (parse error): {path}: {err}");
+    }
+    out
+}

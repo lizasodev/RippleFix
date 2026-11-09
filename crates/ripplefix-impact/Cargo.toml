@@ -1,0 +1,19 @@
+[package]
+name = "ripplefix-impact"
+description = "Project index and evidence-backed impact graph for RippleFix."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ripplefix-core.workspace = true
+ripplefix-python.workspace = true
+ripplefix-typescript.workspace = true
+petgraph.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

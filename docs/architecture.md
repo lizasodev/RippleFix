@@ -20,7 +20,7 @@ evidence. RippleFix contains no AI and no network calls.
             ┌─────────────────────┴───────────┐
  plugins    │ LanguageAnalyzer (API v1)        │
             │  ripplefix-python   (Pydantic)   │
-            │  ripplefix-typescript (planned)  │
+            │  ripplefix-typescript            │
             └──────────────────────────────────┘
 ```
 
@@ -35,7 +35,9 @@ the behavior identical across interfaces and keeps the TypeScript code thin.
 | Crate | Responsibility |
 |---|---|
 | `ripplefix-core` | Domain model (`DataModel`, `Field`, `Evidence`, `Confidence`), structural diff, Git layer, analysis orchestration, plugin trait |
-| `ripplefix-python` | Tree-sitter Python grammar. Classifies Pydantic models and extracts fields, defaults, and aliases |
+| `ripplefix-python` | Tree-sitter Python grammar. Pydantic models (fields, defaults, aliases), imports, FastAPI routes, HTTP calls in tests |
+| `ripplefix-typescript` | Tree-sitter TypeScript/TSX grammar. Object-shaped types, property accesses, object keys, type references |
+| `ripplefix-impact` | Project index, import resolution, cross-file model hierarchy, impact rules, petgraph graph |
 | `ripplefix-cli` | `ripplefix` binary: argument parsing, rendering, exit codes |
 
 ## Key concepts
@@ -61,6 +63,13 @@ is reported as `cosmetic`.
 **Incremental analysis.** Only paths that `git diff` and `git ls-files
 --others` report are parsed, and each one is parsed twice (base and working
 tree).
+
+## Impact rules
+
+The impact rules and their confidence levels are documented at the top of
+`crates/ripplefix-impact/src/lib.rs`. Import resolution follows relative and
+absolute imports. When an absolute module matches more than one file, it is
+treated as unresolved and produces no edge.
 
 ## Rename inference rule
 
