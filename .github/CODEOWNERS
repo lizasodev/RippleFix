@@ -1,5 +1,5 @@
 # Changes to these paths require review from a maintainer.
-*                     @Zer0Dev-exe
-/.github/             @Zer0Dev-exe
-/deny.toml            @Zer0Dev-exe
-/crates/ripplefix-core/src/vcs.rs @Zer0Dev-exe
+*                     @lizasodev
+/.github/             @lizasodev
+/deny.toml            @lizasodev
+/crates/ripplefix-core/src/vcs.rs @lizasodev
